@@ -1,6 +1,6 @@
 name: 'Lock Threads'
 description: 'Lock closed issues, pull requests and discussions after a period of inactivity'
-author: 'Armin Sebastian'
+author: 'step-security'
 inputs:
   github-token:
     description: 'GitHub access token'

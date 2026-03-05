@@ -21,7 +21,7 @@ query ($owner: String!, $repo: String!, $label: String!) {
 
 const createLabelQuery = `
 mutation ($repositoryId: ID!, $name: String!, $color: String!) {
-  createLabel(input: {repositoryId: $repositoryId, name: $name, , color: $color}) {
+  createLabel(input: {repositoryId: $repositoryId, name: $name, color: $color}) {
     label {
       id
       name

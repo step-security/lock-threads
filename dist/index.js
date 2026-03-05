@@ -60257,7 +60257,7 @@ query ($owner: String!, $repo: String!, $label: String!) {
 
 const createLabelQuery = `
 mutation ($repositoryId: ID!, $name: String!, $color: String!) {
-  createLabel(input: {repositoryId: $repositoryId, name: $name, , color: $color}) {
+  createLabel(input: {repositoryId: $repositoryId, name: $name, color: $color}) {
     label {
       id
       name
@@ -60350,7 +60350,7 @@ query ($q: String!) {
 
 async function validateSubscription() {
   const repoPrivate = github.context?.payload?.repository?.private;
-  const upstream = 'gitleaks/gitleaks-action';
+  const upstream = 'dessant/lock-threads';
   const action = process.env.GITHUB_ACTION_REPOSITORY;
   const docsUrl = 'https://docs.stepsecurity.io/actions/stepsecurity-maintained-actions';
   core.info('');
