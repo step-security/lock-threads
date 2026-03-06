@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@actions/core": "^2.0.1",
-    "@actions/github": "^6.0.1",
+    "@actions/github": "^9.0.0",
     "@octokit/plugin-retry": "^8.0.3",
     "@octokit/plugin-throttling": "^11.0.3",
     "axios": "^1.13.6",
