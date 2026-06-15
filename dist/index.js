@@ -11380,7 +11380,12 @@ const Validator = __nccwpck_require__(4852);
 const Values = __nccwpck_require__(1906);
 
 
-const internals = {};
+const internals = {
+    standardTypes: new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'null']),
+    jsonSchemaTarget: 'draft-2020-12',
+    primitiveTypes: new Set(['string', 'number', 'boolean']),
+    nullSchema: () => ({ type: 'null' })
+};
 
 
 internals.Base = class {
@@ -11424,6 +11429,168 @@ internals.Base = class {
 
         assert(typeof Manifest.describe === 'function', 'Manifest functionality disabled');
         return Manifest.describe(this);
+    }
+
+    $_jsonSchema(mode, options = {}) {
+
+        if (options.target !== undefined &&
+            options.target !== internals.jsonSchemaTarget) {
+
+            throw new Error(`Unsupported JSON Schema target: ${options.target}`);
+        }
+
+        const rootCall = !options.$defs;
+        const defs = options.$defs ?? {};
+
+        let schema = {};
+
+        const isTypeAny = this.type === 'any';
+        const isOnly = this._flags.only;
+
+        const valids = this._valids && Array.from(this._valids._values).filter((v) => v !== null);
+        let typesOverlap = true;
+
+        // If 'only' is set, check if the allowed values' types overlap with the schema type
+
+        if (valids && valids.length && isOnly && !isTypeAny) {
+            const types = new Set(valids.map((v) => typeof v));
+            typesOverlap = types.has(this.type) || (this.type === 'date' && types.has('object'));
+        }
+
+        // Set the JSON Schema 'type' if it's a standard type and there's an overlap
+
+        if (!isTypeAny && typesOverlap && internals.standardTypes.has(this.type)) {
+            schema.type = this.type;
+        }
+
+        if (this._flags.description) {
+            schema.description = this._flags.description;
+        }
+
+        if (this._flags.default !== undefined && typeof this._flags.default !== 'function') {
+            schema.default = this._flags.default;
+        }
+
+        // Apply type-specific JSON Schema conversion
+
+        const subOptions = { ...options, $defs: defs };
+        if (this._definition.jsonSchema && typesOverlap) {
+            schema = this._definition.jsonSchema(this, schema, mode, subOptions);
+        }
+
+        // Apply rule-specific JSON Schema conversions
+
+        for (const rule of this._rules) {
+            const definition = this._definition.rules[rule.name];
+            if (definition.jsonSchema && typesOverlap) {
+                schema = definition.jsonSchema(rule, schema, isOnly, mode, subOptions);
+            }
+        }
+
+        // Handle shared schemas
+
+        if (this.$_terms.shared) {
+            for (const shared of this.$_terms.shared) {
+                defs[shared._flags.id] = shared.$_jsonSchema(mode, subOptions);
+            }
+        }
+
+        if (rootCall && Object.keys(defs).length) {
+            schema.$defs = defs;
+        }
+
+        // Handle allowed values (valids)
+
+        if (this._valids) {
+
+            const values = valids.filter((v) => typeof v !== 'symbol');
+            if (values.length) {
+                if (this._flags.only) {
+                    schema.enum = values;
+
+                    const list = Common.intersect(new Set(values.map((v) => typeof v)), internals.primitiveTypes);
+
+                    if (list.size) {
+                        const types = [...list];
+                        schema.type = types.length === 1 ? types[0] : types;
+                    }
+                }
+                else {
+                    // If values are allowed but not exclusive, add them via 'anyOf' if they differ from the main type
+
+                    const otherTypes = values.filter((v) => typeof v !== this.type || isTypeAny);
+                    if (otherTypes.length && !(isTypeAny && !isOnly)) {
+                        if (!schema.anyOf) {
+                            schema = {
+                                anyOf: [schema]
+                            };
+                        }
+
+                        schema.anyOf.push({ enum: otherTypes });
+                    }
+                }
+            }
+        }
+
+        // Handle 'null' if it's an allowed value
+
+        if (this._valids && this._valids.has(null) && !(isTypeAny && !isOnly)) {
+            if (this._valids.length === 1 && (isTypeAny || isOnly)) {
+                schema.type = 'null';
+            }
+            else if (schema.type) {
+                schema.type = [schema.type, 'null'];
+            }
+            else if (schema.anyOf) {
+                schema.anyOf.unshift(internals.nullSchema());
+            }
+            else {
+                schema = {
+                    anyOf: [
+                        internals.nullSchema(),
+                        schema
+                    ]
+                };
+            }
+        }
+
+        // Handle conditionals (whens) by generating multiple possible schemas combined with 'anyOf'
+
+        if (this.$_terms.whens) {
+
+            const base = this.clone();
+            base.$_terms.whens = null;
+
+            const matches = [];
+            for (const when of this.$_terms.whens) {
+                const tests = when.is ? [when] : when.switch;
+                for (let i = 0; i < tests.length; ++i) {
+                    const test = tests[i];
+                    if (test.then) {
+                        matches.push(base.concat(test.then).$_jsonSchema(mode, subOptions));
+                    }
+
+                    if (test.otherwise) {
+                        matches.push(base.concat(test.otherwise).$_jsonSchema(mode, subOptions));
+                    }
+
+                    if (!test.then || (i === tests.length - 1 && !test.otherwise)) {
+                        matches.push(base.$_jsonSchema(mode, subOptions));
+                    }
+                }
+            }
+
+            const results = [];
+            for (const match of matches) {
+                if (!results.some((r) => deepEqual(r, match))) {
+                    results.push(match);
+                }
+            }
+
+            return { anyOf: results };
+        }
+
+        return schema;
     }
 
     // Rules
@@ -12466,9 +12633,9 @@ internals.Base = class {
         return {
             version: 1,
             vendor: 'joi',
-            validate: (value) => {
+            validate: (value, options) => {
 
-                const result = Validator.standard(value, this);
+                const result = Validator.standard(value, this, options);
 
                 if (result instanceof Promise) {
                     return result
@@ -12480,6 +12647,10 @@ internals.Base = class {
                 }
 
                 return mapToStandardError(result.error);
+            },
+            jsonSchema: {
+                input: (options) => this.$_jsonSchema('input', options),
+                output: (options) => this.$_jsonSchema('output', options)
             }
         };
     }
@@ -12762,6 +12933,25 @@ exports.compare = function (a, b, operator) {
 exports["default"] = function (value, defaultValue) {
 
     return value === undefined ? defaultValue : value;
+};
+
+
+exports.intersect = function (set, other) {
+
+    /* $lab:coverage:off$ */
+    if (typeof set.intersection === 'function') {
+        return set.intersection(other);
+    }
+
+    const result = new Set();
+    for (const item of set) {
+        if (other.has(item)) {
+            result.add(item);
+        }
+    }
+
+    return result;
+    /* $lab:coverage:on$ */
 };
 
 
@@ -13584,6 +13774,12 @@ exports.type = function (from, options) {
     }
 
     def.rules = rules;
+
+    // JSON Schema
+
+    if (!def.jsonSchema) {
+        def.jsonSchema = parent.jsonSchema;
+    }
 
     // Modifiers
 
@@ -15502,7 +15698,8 @@ internals.rule = Joi.object({
     manifest: Joi.boolean(),
     method: Joi.function().allow(false),
     multi: Joi.boolean(),
-    validate: Joi.function()
+    validate: Joi.function(),
+    jsonSchema: Joi.function()
 });
 
 
@@ -15536,6 +15733,7 @@ exports.extension = Joi.object({
     prepare: Joi.function().maxArity(3),
     rebuild: Joi.function().arity(1),
     rules: Joi.object().pattern(internals.nameRx, internals.rule),
+    jsonSchema: Joi.function(),
     terms: Joi.object().pattern(internals.nameRx, Joi.object({
         init: Joi.array().allow(null).required(),
         manifest: Joi.object().pattern(/.+/, [
@@ -15632,7 +15830,7 @@ internals.desc.values = Joi.array()
         null,
         Joi.boolean(),
         Joi.function(),
-        Joi.number().allow(Infinity, -Infinity),
+        Joi.number().allow(Infinity, -Infinity, NaN),
         Joi.string().allow(''),
         Joi.symbol(),
         internals.desc.buffer,
@@ -15978,7 +16176,7 @@ module.exports = exports = internals.Template = class {
         const processed = [];
         const head = parts.shift();
         if (head) {
-            processed.push(head);
+            processed.push(internals.decode(head));
         }
 
         for (const part of parts) {
@@ -16870,6 +17068,49 @@ module.exports = Any.extend({
         return internals.errors(errors, helpers);
     },
 
+    jsonSchema(schema, res, mode, options) {
+
+        const matches = [];
+
+        // Collect all alternative schemas from 'matches' term
+
+        for (const match of schema.$_terms.matches) {
+            if (match.schema) {
+                matches.push(match.schema.$_jsonSchema(mode, options));
+            }
+            else {
+                // Handle conditional matches (when/switch)
+
+                const tests = match.is ? [match] : match.switch;
+                for (const test of tests) {
+                    if (test.then) {
+                        matches.push(test.then.$_jsonSchema(mode, options));
+                    }
+
+                    if (test.otherwise) {
+                        matches.push(test.otherwise.$_jsonSchema(mode, options));
+                    }
+                }
+            }
+        }
+
+        if (matches.length) {
+            delete res.type;
+
+            // Map alternatives to 'anyOf' or 'oneOf' based on the match flag
+
+            const matchMode = schema._flags.match ?? 'any';
+            if (matchMode === 'one') {
+                res.oneOf = matches;
+            }
+            else {
+                res.anyOf = matches;
+            }
+        }
+
+        return res;
+    },
+
     rules: {
 
         conditional: {
@@ -17367,6 +17608,87 @@ module.exports = Any.extend({
         return { value: value.slice() };        // Clone the array so that we don't modify the original
     },
 
+    jsonSchema(schema, res, mode, options) {
+
+        const ordered = schema.$_terms.ordered;
+
+        // Handle ordered items (tuple-like) using 'prefixItems'
+
+        if (ordered.length) {
+            res.prefixItems = ordered.map((item) => item.$_jsonSchema(mode, options));
+        }
+
+        if (schema.$_terms.items.length) {
+            let items;
+            if (schema.$_terms.items.length === 1) {
+                items = schema.$_terms.items[0].$_jsonSchema(mode, options);
+            }
+            else {
+                items = {
+                    anyOf: schema.$_terms.items.map((item) => item.$_jsonSchema(mode, options))
+                };
+            }
+
+            // If there are ordered items, remaining items are 'unevaluatedItems'
+
+            if (ordered.length) {
+                res.unevaluatedItems = items;
+                res.minItems = ordered.length;
+            }
+            else {
+                res.items = items;
+            }
+        }
+        else if (ordered.length) {
+            // No additional items allowed beyond the ordered ones
+
+            res.unevaluatedItems = false;
+            res.minItems = ordered.length;
+            res.maxItems = ordered.length;
+        }
+
+        // Map 'has' rules to 'contains' in JSON Schema
+
+        const contains = [];
+        for (const rule of schema._rules) {
+            if (rule.name === 'has') {
+                contains.push(rule.args.schema.$_jsonSchema(mode, options));
+            }
+        }
+
+        if (contains.length) {
+            if (contains.length === 1) {
+                res.contains = contains[0];
+            }
+            else {
+                res.allOf = contains.map((item) => ({ contains: item }));
+            }
+        }
+
+        if (schema._flags.single &&
+            schema.$_terms.items.length) {
+
+            let items;
+            if (schema.$_terms.items.length === 1) {
+                items = schema.$_terms.items[0].$_jsonSchema(mode, options);
+            }
+            else {
+                items = {
+                    anyOf: schema.$_terms.items.map((item) => item.$_jsonSchema(mode, options))
+                };
+            }
+
+            res = {
+                anyOf: [
+                    res,
+                    items
+                ]
+            };
+        }
+
+        return res;
+    },
+
     rules: {
 
         has: {
@@ -17667,6 +17989,13 @@ module.exports = Any.extend({
 
                 return helpers.error('array.' + name, { limit: args.limit, value });
             },
+            jsonSchema(rule, res) {
+
+                res.minItems = rule.args.limit;
+                res.maxItems = rule.args.limit;
+
+                return res;
+            },
             args: [
                 {
                     name: 'limit',
@@ -17681,6 +18010,12 @@ module.exports = Any.extend({
             method(limit) {
 
                 return this.$_addRule({ name: 'max', method: 'length', args: { limit }, operator: '<=' });
+            },
+            jsonSchema(rule, res) {
+
+                res.maxItems = rule.args.limit;
+
+                return res;
             }
         },
 
@@ -17688,6 +18023,12 @@ module.exports = Any.extend({
             method(limit) {
 
                 return this.$_addRule({ name: 'min', method: 'length', args: { limit }, operator: '>=' });
+            },
+            jsonSchema(rule, res) {
+
+                res.minItems = rule.args.limit;
+
+                return res;
             }
         },
 
@@ -17856,6 +18197,12 @@ module.exports = Any.extend({
                 }
 
                 return value;
+            },
+            jsonSchema(rule, res) {
+
+                res.uniqueItems = true;
+
+                return res;
             },
             args: ['comparator', 'options'],
             multi: true
@@ -18170,6 +18517,14 @@ module.exports = Any.extend({
         }
     },
 
+    jsonSchema(schema, res, mode, options) {
+
+        res.type = 'string';
+        res.format = 'binary';
+
+        return res;
+    },
+
     rules: {
         encoding: {
             method(encoding) {
@@ -18193,6 +18548,12 @@ module.exports = Any.extend({
 
                 return helpers.error('binary.' + name, { limit: args.limit, value });
             },
+            jsonSchema(rule, res) {
+
+                res.minLength = rule.args.limit;
+                res.maxLength = rule.args.limit;
+                return res;
+            },
             args: [
                 {
                     name: 'limit',
@@ -18207,6 +18568,11 @@ module.exports = Any.extend({
             method(limit) {
 
                 return this.$_addRule({ name: 'max', method: 'length', args: { limit }, operator: '<=' });
+            },
+            jsonSchema(rule, res) {
+
+                res.maxLength = rule.args.limit;
+                return res;
             }
         },
 
@@ -18214,6 +18580,11 @@ module.exports = Any.extend({
             method(limit) {
 
                 return this.$_addRule({ name: 'min', method: 'length', args: { limit }, operator: '>=' });
+            },
+            jsonSchema(rule, res) {
+
+                res.minLength = rule.args.limit;
+                return res;
             }
         }
     },
@@ -18409,7 +18780,9 @@ const Common = __nccwpck_require__(4205);
 const Template = __nccwpck_require__(5706);
 
 
-const internals = {};
+const internals = {
+    formats: ['iso', 'javascript', 'unix']
+};
 
 
 internals.isDate = function (value) {
@@ -18450,6 +18823,14 @@ module.exports = Any.extend({
         return { value, errors: error('date.format', { format }) };
     },
 
+    jsonSchema(schema, res, mode, options) {
+
+        res.type = 'string';
+        res.format = 'date-time';
+
+        return res;
+    },
+
     rules: {
 
         compare: {
@@ -18480,7 +18861,7 @@ module.exports = Any.extend({
         format: {
             method(format) {
 
-                assert(['iso', 'javascript', 'unix'].includes(format), 'Unknown date format', format);
+                assert(internals.formats.includes(format), 'Unknown date format', format);
 
                 return this.$_setFlag('format', format);
             }
@@ -18490,6 +18871,15 @@ module.exports = Any.extend({
             method(date) {
 
                 return this.$_addRule({ name: 'greater', method: 'compare', args: { date }, operator: '>' });
+            },
+            jsonSchema(rule, res) {
+
+                const date = rule.args.date;
+                if (date instanceof Date) {
+                    res['x-constraint'] = { ...res['x-constraint'], greater: date.toISOString() };
+                }
+
+                return res;
             }
         },
 
@@ -18504,6 +18894,15 @@ module.exports = Any.extend({
             method(date) {
 
                 return this.$_addRule({ name: 'less', method: 'compare', args: { date }, operator: '<' });
+            },
+            jsonSchema(rule, res) {
+
+                const date = rule.args.date;
+                if (date instanceof Date) {
+                    res['x-constraint'] = { ...res['x-constraint'], less: date.toISOString() };
+                }
+
+                return res;
             }
         },
 
@@ -18511,6 +18910,15 @@ module.exports = Any.extend({
             method(date) {
 
                 return this.$_addRule({ name: 'max', method: 'compare', args: { date }, operator: '<=' });
+            },
+            jsonSchema(rule, res) {
+
+                const date = rule.args.date;
+                if (date instanceof Date) {
+                    res['x-constraint'] = { ...res['x-constraint'], max: date.toISOString() };
+                }
+
+                return res;
             }
         },
 
@@ -18518,6 +18926,15 @@ module.exports = Any.extend({
             method(date) {
 
                 return this.$_addRule({ name: 'min', method: 'compare', args: { date }, operator: '>=' });
+            },
+            jsonSchema(rule, res) {
+
+                const date = rule.args.date;
+                if (date instanceof Date) {
+                    res['x-constraint'] = { ...res['x-constraint'], min: date.toISOString() };
+                }
+
+                return res;
             }
         },
 
@@ -18789,6 +19206,70 @@ module.exports = Any.extend({
         return schema.keys(keys);
     },
 
+    jsonSchema(schema, res, mode, options) {
+
+        res.type = 'object';
+
+        // Map Joi keys to JSON Schema 'properties' and 'required'
+
+        if (schema.$_terms.keys) {
+            res.properties = {};
+
+            const required = [];
+
+            for (const child of schema.$_terms.keys) {
+                const jsonSchema = child.schema.$_jsonSchema(mode, options);
+                res.properties[child.key] = jsonSchema;
+                if (child.schema._flags.presence === 'required' ||
+                    (mode === 'output' && child.schema._flags.default !== undefined)) {
+
+                    required.push(child.key);
+                }
+            }
+
+            if (required.length) {
+                res.required = required.sort();
+            }
+        }
+
+        // Map Joi patterns to JSON Schema 'patternProperties' or 'additionalProperties'
+
+        if (schema.$_terms.patterns) {
+            const patternProperties = {};
+
+            for (const pattern of schema.$_terms.patterns) {
+                if (pattern.regex) {
+                    patternProperties[pattern.regex.source] = pattern.rule.$_jsonSchema(mode, options);
+                }
+                else {
+                    const isAny = pattern.schema.type === 'any';
+                    if (isAny) {
+                        res.additionalProperties = pattern.rule.$_jsonSchema(mode, options);
+                    }
+                    else {
+                        // Best effort for schema-based patterns that are not 'any'
+                        patternProperties['.*'] = pattern.rule.$_jsonSchema(mode, options);
+                    }
+                }
+            }
+
+            if (Object.keys(patternProperties).length) {
+                res.patternProperties = patternProperties;
+            }
+        }
+
+        // Handle 'additionalProperties' based on unknown keys flag
+
+        if (res.additionalProperties === undefined) {
+            const additionalProperties = schema._flags.unknown === true || (schema._flags.unknown === undefined && !schema.$_terms.keys && !schema.$_terms.patterns && !schema._flags.only);
+            if (additionalProperties === false) {
+                res.additionalProperties = false;
+            }
+        }
+
+        return res;
+    },
+
     validate(value, { schema, error, state, prefs }) {
 
         if (!value ||
@@ -19020,6 +19501,12 @@ module.exports = Any.extend({
 
                 return helpers.error('object.' + name, { limit: args.limit, value });
             },
+            jsonSchema(rule, res) {
+
+                res.minProperties = rule.args.limit;
+                res.maxProperties = rule.args.limit;
+                return res;
+            },
             args: [
                 {
                     name: 'limit',
@@ -19034,6 +19521,11 @@ module.exports = Any.extend({
             method(limit) {
 
                 return this.$_addRule({ name: 'max', method: 'length', args: { limit }, operator: '<=' });
+            },
+            jsonSchema(rule, res) {
+
+                res.maxProperties = rule.args.limit;
+                return res;
             }
         },
 
@@ -19041,6 +19533,11 @@ module.exports = Any.extend({
             method(limit) {
 
                 return this.$_addRule({ name: 'min', method: 'length', args: { limit }, operator: '>=' });
+            },
+            jsonSchema(rule, res) {
+
+                res.minProperties = rule.args.limit;
+                return res;
             }
         },
 
@@ -19868,13 +20365,55 @@ module.exports = Any.extend({
         return schema.ref(ref);
     },
 
-    validate(value, { schema, state, prefs }) {
+    jsonSchema(schema, res, mode, options) {
+
+        if (!schema.$_terms.link) {
+            return res;
+        }
+
+        const { ref } = schema.$_terms.link[0];
+
+        if (ref.ancestor === 'root' || ref.ancestor > 0) {
+            res.$ref = `#/${ref.path.map((p) => `properties/${p}`).join('/')}`;
+            return res;
+        }
+
+        if (ref.path.length === 1) {
+            res.$ref = `#/$defs/${ref.path[0]}`;
+        }
+        else {
+            res.$ref = `#/${ref.path.slice(1).map((p) => `properties/${p}`).join('/')}`;
+        }
+
+        return res;
+    },
+
+    validate(value, { schema, state, prefs, error }) {
 
         assert(schema.$_terms.link, 'Uninitialized link schema');
 
+        const limit = schema._flags.maxRecursion;
+        if (limit !== undefined &&
+            state.schemas.filter((entry) => entry.schema === schema).length > limit) {
+
+            return { value, errors: error('link.maxRecursion', { limit }) };
+        }
+
         const linked = internals.generate(schema, value, state, prefs);
         const ref = schema.$_terms.link[0].ref;
-        return linked.$_validate(value, state.nest(linked, `link:${ref.display}:${linked.type}`), prefs);
+
+        try {
+            return linked.$_validate(value, state.nest(linked, `link:${ref.display}:${linked.type}`), prefs);
+        }
+        catch (err) {
+            /* $lab:coverage:off$ */
+            if (!(err instanceof RangeError)) {
+                throw err;
+            }
+            /* $lab:coverage:on$ */
+
+            return { value, errors: error('link.depth') };
+        }
     },
 
     generate(schema, value, state, prefs) {
@@ -19905,7 +20444,21 @@ module.exports = Any.extend({
 
                 return this.$_setFlag('relative', enabled);
             }
+        },
+
+        maxRecursion: {
+            method(limit) {
+
+                assert(Number.isSafeInteger(limit) && limit >= 1, 'limit must be a positive integer');
+
+                return this.$_setFlag('maxRecursion', limit);
+            }
         }
+    },
+
+    messages: {
+        'link.depth': '{{#label}} exceeds maximum recursion depth supported by the runtime',
+        'link.maxRecursion': '{{#label}} exceeds maximum recursion depth of {{#limit}}'
     },
 
     overrides: {
@@ -20150,6 +20703,11 @@ module.exports = Any.extend({
             method(limit) {
 
                 return this.$_addRule({ name: 'greater', method: 'compare', args: { limit }, operator: '>' });
+            },
+            jsonSchema(rule, res) {
+
+                res.exclusiveMinimum = rule.args.limit;
+                return res;
             }
         },
 
@@ -20165,6 +20723,12 @@ module.exports = Any.extend({
                 }
 
                 return helpers.error('number.integer');
+            },
+            jsonSchema(rule, res) {
+
+                res.type = 'integer';
+
+                return res;
             }
         },
 
@@ -20172,6 +20736,11 @@ module.exports = Any.extend({
             method(limit) {
 
                 return this.$_addRule({ name: 'less', method: 'compare', args: { limit }, operator: '<' });
+            },
+            jsonSchema(rule, res) {
+
+                res.exclusiveMaximum = rule.args.limit;
+                return res;
             }
         },
 
@@ -20179,6 +20748,11 @@ module.exports = Any.extend({
             method(limit) {
 
                 return this.$_addRule({ name: 'max', method: 'compare', args: { limit }, operator: '<=' });
+            },
+            jsonSchema(rule, res) {
+
+                res.maximum = rule.args.limit;
+                return res;
             }
         },
 
@@ -20186,6 +20760,11 @@ module.exports = Any.extend({
             method(limit) {
 
                 return this.$_addRule({ name: 'min', method: 'compare', args: { limit }, operator: '>=' });
+            },
+            jsonSchema(rule, res) {
+
+                res.minimum = rule.args.limit;
+                return res;
             }
         },
 
@@ -20216,6 +20795,11 @@ module.exports = Any.extend({
                 return Math.round(pfactor * value) % Math.round(pfactor * base) === 0 ?
                     value :
                     helpers.error('number.multiple', { multiple: options.args.base, value });
+            },
+            jsonSchema(rule, res) {
+
+                res.multipleOf = rule.args.base;
+                return res;
             },
             args: [
                 {
@@ -20252,6 +20836,13 @@ module.exports = Any.extend({
                 }
 
                 return helpers.error('number.port');
+            },
+            jsonSchema(rule, res) {
+
+                res.type = 'integer';
+                res.minimum = 0;
+                res.maximum = 65535;
+                return res;
             }
         },
 
@@ -20298,6 +20889,17 @@ module.exports = Any.extend({
                 }
 
                 return helpers.error(`number.${sign}`);
+            },
+            jsonSchema(rule, res) {
+
+                if (rule.args.sign === 'positive') {
+                    res.exclusiveMinimum = 0;
+                }
+                else {
+                    res.exclusiveMaximum = 0;
+                }
+
+                return res;
             }
         },
 
@@ -20557,6 +21159,23 @@ module.exports = Any.extend({
         }
     },
 
+    jsonSchema(schema, res, mode, options) {
+
+        const noEmpty = !schema._valids?.has('') && !schema._flags.only;
+        if (noEmpty) {
+            const min = schema.$_getRule('min');
+            const length = schema.$_getRule('length');
+
+            if ((!min || min.args.limit > 0) &&
+                (!length || length.args.limit > 0)) {
+
+                res.minLength = 1;
+            }
+        }
+
+        return res;
+    },
+
     rules: {
 
         alphanum: {
@@ -20593,6 +21212,11 @@ module.exports = Any.extend({
                 }
 
                 return helpers.error('string.base64');
+            },
+            jsonSchema(rule, res) {
+
+                res.format = 'base64';
+                return res;
             }
         },
 
@@ -20673,6 +21297,11 @@ module.exports = Any.extend({
                 }
 
                 return helpers.error('string.dataUri');
+            },
+            jsonSchema(rule, res) {
+
+                res.format = 'data-uri';
+                return res;
             }
         },
 
@@ -20722,6 +21351,11 @@ module.exports = Any.extend({
                 }
 
                 return helpers.error('string.email', { value, invalids });
+            },
+            jsonSchema(rule, res) {
+
+                res.format = 'email';
+                return res;
             }
         },
 
@@ -20811,6 +21445,11 @@ module.exports = Any.extend({
                 }
 
                 return value;
+            },
+            jsonSchema(rule, res) {
+
+                res.format = 'uuid';
+                return res;
             }
         },
 
@@ -20843,6 +21482,11 @@ module.exports = Any.extend({
                 }
 
                 return value;
+            },
+            jsonSchema(rule, res) {
+
+                res.format = 'hex';
+                return res;
             }
         },
 
@@ -20860,6 +21504,11 @@ module.exports = Any.extend({
                 }
 
                 return helpers.error('string.hostname');
+            },
+            jsonSchema(rule, res) {
+
+                res.format = 'hostname';
+                return res;
             }
         },
 
@@ -20890,6 +21539,18 @@ module.exports = Any.extend({
                 }
 
                 return helpers.error('string.ip', { value, cidr: options.cidr });
+            },
+            jsonSchema(rule, res) {
+
+                const version = rule.args.options.version;
+                if (version && version.length === 1) {
+                    res.format = version[0];
+                }
+                else {
+                    res.format = 'ip';
+                }
+
+                return res;
             }
         },
 
@@ -20905,6 +21566,11 @@ module.exports = Any.extend({
                 }
 
                 return error('string.isoDate');
+            },
+            jsonSchema(rule, res) {
+
+                res.format = 'date-time';
+                return res;
             }
         },
 
@@ -20920,6 +21586,11 @@ module.exports = Any.extend({
                 }
 
                 return helpers.error('string.isoDuration');
+            },
+            jsonSchema(rule, res) {
+
+                res.format = 'duration';
+                return res;
             }
         },
 
@@ -20936,6 +21607,12 @@ module.exports = Any.extend({
                 }
 
                 return helpers.error('string.' + name, { limit: args.limit, value, encoding });
+            },
+            jsonSchema(rule, res) {
+
+                res.minLength = rule.args.limit;
+                res.maxLength = rule.args.limit;
+                return res;
             },
             args: [
                 {
@@ -20960,6 +21637,11 @@ module.exports = Any.extend({
 
                 return internals.length(this, 'max', limit, '<=', encoding);
             },
+            jsonSchema(rule, res) {
+
+                res.maxLength = rule.args.limit;
+                return res;
+            },
             args: ['limit', 'encoding']
         },
 
@@ -20967,6 +21649,15 @@ module.exports = Any.extend({
             method(limit, encoding) {
 
                 return internals.length(this, 'min', limit, '>=', encoding);
+            },
+            jsonSchema(rule, res) {
+
+                if (rule.args.limit > 0) {
+
+                    res.minLength = rule.args.limit;
+                }
+
+                return res;
             },
             args: ['limit', 'encoding']
         },
@@ -21015,6 +21706,11 @@ module.exports = Any.extend({
 
                 return helpers.error(errorCode, { name: options.name, regex, value });
             },
+            jsonSchema(rule, res) {
+
+                res.pattern = rule.args.regex.source;
+                return res;
+            },
             args: ['regex', 'options'],
             multi: true
         },
@@ -21052,6 +21748,11 @@ module.exports = Any.extend({
                 }
 
                 return helpers.error('string.token');
+            },
+            jsonSchema(rule, res) {
+
+                res.format = 'token';
+                return res;
             }
         },
 
@@ -21141,6 +21842,11 @@ module.exports = Any.extend({
                 }
 
                 return helpers.error('string.uri');
+            },
+            jsonSchema(rule, res) {
+
+                res.format = 'uri';
+                return res;
             }
         }
     },
@@ -21397,6 +22103,18 @@ module.exports = Any.extend({
         }
     },
 
+    jsonSchema(schema, json, mode, options) {
+
+        const map = schema.$_terms.map;
+        if (!map.size) {
+            return {};
+        }
+
+        return {
+            anyOf: Array.from(map.keys()).map((key) => ({ const: key }))
+        };
+    },
+
     messages: {
         'symbol.base': '{{#label}} must be a symbol',
         'symbol.map': '{{#label}} must be one of {{#map}}'
@@ -21597,14 +22315,15 @@ exports.entryAsync = async function (value, schema, prefs) {
 };
 
 
-exports.standard = function (value, schema) {
+exports.standard = function (value, schema, options) {
 
+    const prefs = options?.libraryOptions;
 
     if (schema.isAsync()) {
-        return exports.entryAsync(value, schema);
+        return exports.entryAsync(value, schema, prefs);
     }
 
-    return exports.entry(value, schema);
+    return exports.entry(value, schema, prefs);
 };
 
 
@@ -52333,7 +53052,7 @@ __webpack_unused_export__ = defaultContentType
 /***/ 570:
 /***/ ((module) => {
 
-module.exports = /*#__PURE__*/JSON.parse('{"name":"joi","description":"Object schema validation","version":"18.0.2","repository":{"url":"git://github.com/hapijs/joi","type":"git"},"engines":{"node":">= 20"},"main":"lib/index.js","types":"lib/index.d.ts","browser":"dist/joi-browser.min.js","files":["lib/**/*","dist/*"],"keywords":["schema","validation"],"dependencies":{"@hapi/address":"^5.1.1","@hapi/formula":"^3.0.2","@hapi/hoek":"^11.0.7","@hapi/pinpoint":"^2.0.1","@hapi/tlds":"^1.1.1","@hapi/topo":"^6.0.2","@standard-schema/spec":"^1.0.0"},"devDependencies":{"@hapi/bourne":"^3.0.0","@hapi/code":"^9.0.3","@hapi/eslint-plugin":"^7.0.0","@hapi/joi-legacy-test":"npm:@hapi/joi@15.x.x","@hapi/lab":"^26.0.0","@types/node":"^20.17.47","typescript":"^5.8.3"},"scripts":{"prepublishOnly":"cd browser && npm install && npm run build","test":"lab -t 100 -a @hapi/code -L -Y","test-cov-html":"lab -r html -o coverage.html -a @hapi/code"},"license":"BSD-3-Clause"}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"joi","description":"Object schema validation","version":"18.2.1","repository":{"url":"git://github.com/hapijs/joi.git","type":"git"},"engines":{"node":">= 20"},"main":"lib/index.js","types":"lib/index.d.ts","browser":"dist/joi-browser.min.js","files":["lib/**/*","dist/*"],"keywords":["schema","validation"],"dependencies":{"@hapi/address":"^5.1.1","@hapi/formula":"^3.0.2","@hapi/hoek":"^11.0.7","@hapi/pinpoint":"^2.0.1","@hapi/tlds":"^1.1.1","@hapi/topo":"^6.0.2","@standard-schema/spec":"^1.1.0"},"devDependencies":{"@hapi/bourne":"^3.0.0","@hapi/code":"^9.0.3","@hapi/eslint-plugin":"^7.0.0","@hapi/joi-legacy-test":"npm:@hapi/joi@15.x.x","@hapi/lab":"^26.0.0","@types/node":"^20.17.47","ajv":"^8.18.0","typescript":"^5.8.3"},"scripts":{"prepublishOnly":"cd browser && npm install && npm run build","test":"lab -t 100 -a @hapi/code -L -Y","test-cov-html":"lab -r html -o coverage.html -a @hapi/code"},"license":"BSD-3-Clause"}');
 
 /***/ }),
 
