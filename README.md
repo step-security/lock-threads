@@ -478,7 +478,7 @@ it will take a few hours or days to process them all.
 
 ## License
 
-Copyright (c) 2017-2025 Armin Sebastian
+Copyright (c) 2017-2026 Armin Sebastian
 Copyright (c) 2026 StepSecurity
 
 This software is released under the terms of the MIT License.

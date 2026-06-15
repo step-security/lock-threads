@@ -1,5 +1,5 @@
-import core from '@actions/core';
-import * as github from '@actions/github';
+import {debug, info, error, setFailed, setOutput} from '@actions/core';
+import {context} from '@actions/github';
 import axios from 'axios';
 
 import {getConfig, getClient} from './utils.js';
@@ -16,16 +16,16 @@ import {
 
 
 async function validateSubscription() {
-  const repoPrivate = github.context?.payload?.repository?.private;
+  const repoPrivate = context?.payload?.repository?.private;
   const upstream = 'dessant/lock-threads';
   const action = process.env.GITHUB_ACTION_REPOSITORY;
   const docsUrl = 'https://docs.stepsecurity.io/actions/stepsecurity-maintained-actions';
-  core.info('');
-  core.info('\u001b[1;36mStepSecurity Maintained Action\u001b[0m');
-  core.info(`Secure drop-in replacement for ${upstream}`);
-  if (repoPrivate === false) core.info('\u001b[32m\u2713 Free for public repositories\u001b[0m');
-  core.info(`\u001b[36mLearn more:\u001b[0m ${docsUrl}`);
-  core.info('');
+  info('');
+  info('[1;36mStepSecurity Maintained Action[0m');
+  info(`Secure drop-in replacement for ${upstream}`);
+  if (repoPrivate === false) info('[32m✓ Free for public repositories[0m');
+  info(`[36mLearn more:[0m ${docsUrl}`);
+  info('');
   if (repoPrivate === false) return;
   const serverUrl = process.env.GITHUB_SERVER_URL || 'https://github.com';
   const body = { action: action || '' };
@@ -35,13 +35,13 @@ async function validateSubscription() {
       `https://agent.api.stepsecurity.io/v1/github/${process.env.GITHUB_REPOSITORY}/actions/maintained-actions-subscription`,
       body, { timeout: 3000 }
     );
-  } catch (error) {
-    if (axios.isAxiosError(error) && error.response?.status === 403) {
-      core.error(`\u001b[1;31mThis action requires a StepSecurity subscription for private repositories.\u001b[0m`);
-      core.error(`\u001b[31mLearn how to enable a subscription: ${docsUrl}\u001b[0m`);
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 403) {
+      error(`[1;31mThis action requires a StepSecurity subscription for private repositories.[0m`);
+      error(`[31mLearn how to enable a subscription: ${docsUrl}[0m`);
       process.exit(1);
     }
-    core.info('Timeout or API not reachable. Continuing to next step.');
+    info('Timeout or API not reachable. Continuing to next step.');
   }
 }
 
@@ -54,7 +54,7 @@ async function run() {
     const app = new App(config, client);
     await app.lockThreads();
   } catch (err) {
-    core.setFailed(err.message);
+    setFailed(err.message);
   }
 }
 
@@ -72,22 +72,22 @@ class App {
     for (const item of threadTypes) {
       const threads = await this.lock(item);
 
-      core.debug(`Setting output (${item}s)`);
+      debug(`Setting output (${item}s)`);
       if (threads.length) {
-        core.setOutput(`${item}s`, JSON.stringify(threads));
+        setOutput(`${item}s`, JSON.stringify(threads));
 
         if (logOutput) {
-          core.info(`Output (${item}s):`);
-          core.info(JSON.stringify(threads, null, 2));
+          info(`Output (${item}s):`);
+          info(JSON.stringify(threads, null, 2));
         }
       } else {
-        core.setOutput(`${item}s`, '');
+        setOutput(`${item}s`, '');
       }
     }
   }
 
   async lock(threadType) {
-    const {owner, repo} = github.context.repo;
+    const {owner, repo} = context.repo;
 
     const addLabels = this.config[`add-${threadType}-labels`];
     const removeLabels = this.config[`remove-${threadType}-labels`];
@@ -107,7 +107,7 @@ class App {
       const discussionId = result.id;
 
       if (comment) {
-        core.debug(`Commenting (${threadType}: ${threadNumber})`);
+        debug(`Commenting (${threadType}: ${threadNumber})`);
 
         if (threadType === 'discussion') {
           await this.client.graphql(addDiscussionCommentQuery, {
@@ -155,7 +155,7 @@ class App {
           );
 
           if (newLabels.length) {
-            core.debug(`Labeling (${threadType}: ${threadNumber})`);
+            debug(`Labeling (${threadType}: ${threadNumber})`);
 
             if (threadType === 'discussion') {
               const labels = [];
@@ -172,7 +172,7 @@ class App {
                   ({
                     createLabel: {label}
                   } = await this.client.graphql(createLabelQuery, {
-                    repositoryId: github.context.payload.repository.node_id,
+                    repositoryId: context.payload.repository.node_id,
                     name: labelName,
                     color: 'ffffff',
                     headers: {
@@ -203,7 +203,7 @@ class App {
           );
 
           if (matchingLabels.length) {
-            core.debug(`Unlabeling (${threadType}: ${threadNumber})`);
+            debug(`Unlabeling (${threadType}: ${threadNumber})`);
 
             if (threadType === 'discussion') {
               await this.client.graphql(removeLabelsFromLabelableQuery, {
@@ -222,7 +222,7 @@ class App {
         }
       }
 
-      core.debug(`Locking (${threadType}: ${threadNumber})`);
+      debug(`Locking (${threadType}: ${threadNumber})`);
 
       if (threadType === 'discussion') {
         await this.client.graphql(lockLockableQuery, {
@@ -245,7 +245,7 @@ class App {
   }
 
   async search(threadType) {
-    const {owner, repo} = github.context.repo;
+    const {owner, repo} = context.repo;
     const updatedTime = this.getUpdatedTimestamp(
       this.config[`${threadType}-inactive-days`]
     );
@@ -293,7 +293,7 @@ class App {
       query += ' is:pr';
     }
 
-    core.debug(`Searching (${threadType}s)`);
+    debug(`Searching (${threadType}s)`);
 
     let results;
     if (threadType === 'discussion') {
