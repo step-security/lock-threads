@@ -1,6 +1,6 @@
 {
   "name": "lock-threads",
-  "version": "6.0.0",
+  "version": "6.0.2",
   "description": "A GitHub Action that locks closed issues and pull requests after a period of inactivity.",
   "author": "step-security",
   "license": "MIT",
@@ -18,16 +18,16 @@
     "build": "ncc build src/index.js -o dist"
   },
   "dependencies": {
-    "@actions/core": "^2.0.1",
-    "@actions/github": "^9.0.0",
-    "@octokit/plugin-retry": "^8.0.3",
+    "@actions/core": "^3.0.1",
+    "@actions/github": "^9.1.1",
+    "@octokit/plugin-retry": "^8.1.0",
     "@octokit/plugin-throttling": "^11.0.3",
     "axios": "^1.13.6",
-    "joi": "^18.0.2"
+    "joi": "^18.2.1"
   },
   "devDependencies": {
     "@vercel/ncc": "^0.38.4",
-    "prettier": "^3.7.4"
+    "prettier": "^3.8.3"
   },
   "engines": {
     "node": ">=24.0.0"
