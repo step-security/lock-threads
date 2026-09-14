@@ -10126,12 +10126,12 @@ internals.serializer = function () {
                     value = annotated;
                 }
                 else {
-                    for (const errorKey in annotations.errors) {
+                    for (const errorKey of Object.keys(annotations.errors)) {
                         value[`${errorKey}_$key$_${annotations.errors[errorKey].sort().join(', ')}_$end$_`] = value[errorKey];
                         value[errorKey] = undefined;
                     }
 
-                    for (const missingKey in annotations.missing) {
+                    for (const missingKey of Object.keys(annotations.missing)) {
                         value[`_$miss$_${missingKey}|${annotations.missing[missingKey]}_$end$_`] = '__missing__';
                     }
                 }
@@ -10279,7 +10279,7 @@ internals.Base = class {
 
         for (const rule of this._rules) {
             const definition = this._definition.rules[rule.name];
-            if (definition.jsonSchema && typesOverlap) {
+            if (definition.jsonSchema && typesOverlap && !rule._resolve.length) {
                 schema = definition.jsonSchema(rule, schema, isOnly, mode, subOptions);
             }
         }
@@ -10405,7 +10405,7 @@ internals.Base = class {
 
         const obj = this.clone();
         obj.$_terms.alterations = obj.$_terms.alterations || [];
-        for (const target in targets) {
+        for (const target of Object.keys(targets)) {
             const adjuster = targets[target];
             assert(typeof adjuster === 'function', 'Alteration adjuster for', target, 'must be a function');
             obj.$_terms.alterations.push({ target, adjuster });
@@ -10740,7 +10740,7 @@ internals.Base = class {
 
         // Terms
 
-        for (const key in source.$_terms) {
+        for (const key of Object.keys(source.$_terms)) {
             const terms = source.$_terms[key];
             if (!terms) {
                 if (!obj.$_terms[key]) {
@@ -10844,7 +10844,7 @@ internals.Base = class {
             const original = obj._rules[i];
             const rule = clone(original);
 
-            for (const name in options) {
+            for (const name of Object.keys(options)) {
                 def.modifiers[name](rule, options[name]);
                 assert(rule.name === original.name, 'Cannot change rule name');
             }
@@ -10924,7 +10924,7 @@ internals.Base = class {
         assert(options && typeof options === 'object', 'Invalid options');
         assert(options.name && typeof options.name === 'string', 'Invalid rule name');
 
-        for (const key in options) {
+        for (const key of Object.keys(options)) {
             assert(key[0] !== '_', 'Cannot set private rule properties');
         }
 
@@ -10942,9 +10942,10 @@ internals.Base = class {
         const obj = this.clone();
 
         if (args) {
-            assert(Object.keys(args).length === 1 || Object.keys(args).length === this._definition.rules[rule.name].args.length, 'Invalid rule definition for', this.type, rule.name);
+            const argKeys = Object.keys(args);
+            assert(argKeys.length === 1 || argKeys.length === this._definition.rules[rule.name].args.length, 'Invalid rule definition for', this.type, rule.name);
 
-            for (const key in args) {
+            for (const key of argKeys) {
                 let arg = args[key];
 
                 if (definition.argsByName) {
@@ -11148,21 +11149,23 @@ internals.Base = class {
         target._valids = this._valids && this._valids.clone();
         target._invalids = this._invalids && this._invalids.clone();
         target._rules = this._rules.slice();
-        target._singleRules = clone(this._singleRules, { shallow: true });
+        target._singleRules = new Map(this._singleRules);
         target._refs = this._refs.clone();
         target._flags = Object.assign({}, this._flags);
         target._cache = null;
 
         target.$_terms = {};
-        for (const key in this.$_terms) {
+        for (const key of Object.keys(this.$_terms)) {
             target.$_terms[key] = this.$_terms[key] ? this.$_terms[key].slice() : null;
         }
 
         // Backwards compatibility
 
         target.$_super = {};
-        for (const override in this.$_super) {
-            target.$_super[override] = this._super[override].bind(target);
+        if (this.$_super) {
+            for (const override of Object.keys(this.$_super)) {
+                target.$_super[override] = this._super[override].bind(target);
+            }
         }
 
         return target;
@@ -11174,7 +11177,7 @@ internals.Base = class {
         obj._reset();
 
         const terms = obj._definition.terms;
-        for (const name in terms) {
+        for (const name of Object.keys(terms)) {
             const term = terms[name];
             obj.$_terms[name] = term.init;
         }
@@ -12027,7 +12030,7 @@ internals.walk = function (schema) {
 
     assert(Object.getPrototypeOf(schema) === Object.getPrototypeOf({}), 'Schema can only contain plain objects');
 
-    for (const key in schema) {
+    for (const key of Object.keys(schema)) {
         const compiler = internals.walk(schema[key]);
         if (compiler) {
             return compiler;
@@ -12478,7 +12481,7 @@ exports.type = function (from, options) {
 
     const terms = Object.assign({}, parent.terms);
     if (def.terms) {
-        for (const name in def.terms) {                                     // Only apply own terms
+        for (const name of Object.keys(def.terms)) {                        // Only apply own terms
             const term = def.terms[name];
             assert(schema.$_terms[name] === undefined, 'Invalid term override for', def.type, name);
             schema.$_terms[name] = term.init;
@@ -12522,7 +12525,7 @@ exports.type = function (from, options) {
 
     const rules = Object.assign({}, parent.rules);
     if (def.rules) {
-        for (const name in def.rules) {
+        for (const name of Object.keys(def.rules)) {
             const rule = def.rules[name];
             assert(typeof rule === 'object', 'Invalid rule definition for', def.type, name);
 
@@ -12582,7 +12585,7 @@ exports.type = function (from, options) {
 
     const modifiers = Object.assign({}, parent.modifiers);
     if (def.modifiers) {
-        for (const name in def.modifiers) {
+        for (const name of Object.keys(def.modifiers)) {
             assert(!prototype[name], 'Rule conflict in', def.type, name);
 
             const modifier = def.modifiers[name];
@@ -12605,7 +12608,7 @@ exports.type = function (from, options) {
     if (def.overrides) {
         prototype._super = base;
         schema.$_super = {};                                                            // Backwards compatibility
-        for (const override in def.overrides) {
+        for (const override of Object.keys(def.overrides)) {
             assert(base[override], 'Cannot override missing', override);
             def.overrides[override][Common.symbols.parent] = base[override];
             schema.$_super[override] = base[override].bind(schema);                     // Backwards compatibility
@@ -12840,7 +12843,7 @@ internals.root = function () {
 
     // Aliases
 
-    for (const alias in internals.aliases) {
+    for (const alias of Object.keys(internals.aliases)) {
         const target = internals.aliases[alias];
         root[alias] = root[target];
     }
@@ -12973,7 +12976,7 @@ internals.methods = {
             types[type] = this[type]();
         }
 
-        for (const target in internals.aliases) {
+        for (const target of Object.keys(internals.aliases)) {
             types[target] = this[target]();
         }
 
@@ -13083,7 +13086,7 @@ exports.describe = function (schema) {
 
     // Flags
 
-    for (const flag in schema._flags) {
+    for (const flag of Object.keys(schema._flags)) {
         if (flag[0] !== '_') {
             desc.flags[flag] = internals.describe(schema._flags[flag]);
         }
@@ -13123,7 +13126,7 @@ exports.describe = function (schema) {
 
         const item = { name: rule.name };
 
-        for (const custom in def.modifiers) {
+        for (const custom of Object.keys(def.modifiers)) {
             if (rule[custom] !== undefined) {
                 item[custom] = internals.describe(rule[custom]);
             }
@@ -13131,7 +13134,7 @@ exports.describe = function (schema) {
 
         if (rule.args) {
             item.args = {};
-            for (const key in rule.args) {
+            for (const key of Object.keys(rule.args)) {
                 const arg = rule.args[key];
                 if (key === 'options' &&
                     !Object.keys(arg).length) {
@@ -13156,7 +13159,7 @@ exports.describe = function (schema) {
 
     // Terms (must be last to verify no name conflicts)
 
-    for (const term in schema.$_terms) {
+    for (const term of Object.keys(schema.$_terms)) {
         if (term[0] === '_') {
             continue;
         }
@@ -13278,7 +13281,7 @@ internals.describe = function (item, options = {}) {
     }
 
     const normalized = {};
-    for (const key in item) {
+    for (const key of Object.keys(item)) {
         const value = item[key];
         if (value === undefined) {
             continue;
@@ -13317,7 +13320,7 @@ internals.Builder = class {
         // Flags
 
         if (desc.flags) {
-            for (const flag in desc.flags) {
+            for (const flag of Object.keys(desc.flags)) {
                 const setter = def.flags[flag] && def.flags[flag].setter || flag;
                 assert(typeof schema[setter] === 'function', 'Invalid flag', flag, 'for type', desc.type);
                 schema = schema[setter](this.build(desc.flags[flag]));
@@ -13349,7 +13352,7 @@ internals.Builder = class {
                 const args = [];
                 if (rule.args) {
                     const built = {};
-                    for (const key in rule.args) {
+                    for (const key of Object.keys(rule.args)) {
                         built[key] = this.build(rule.args[key], { assign: key });
                     }
 
@@ -13374,7 +13377,7 @@ internals.Builder = class {
                 // Ruleset
 
                 const options = {};
-                for (const custom in def.modifiers) {
+                for (const custom of Object.keys(def.modifiers)) {
                     if (rule[custom] !== undefined) {
                         options[custom] = this.build(rule[custom]);
                     }
@@ -13389,7 +13392,7 @@ internals.Builder = class {
         // Terms
 
         const terms = {};
-        for (const key in desc) {
+        for (const key of Object.keys(desc)) {
             if (['allow', 'flags', 'invalid', 'whens', 'preferences', 'rules', 'type'].includes(key)) {
                 continue;
             }
@@ -13414,7 +13417,7 @@ internals.Builder = class {
 
             if (typeof manifest === 'object') {
                 terms[key] = {};
-                for (const name in desc[key]) {
+                for (const name of Object.keys(desc[key])) {
                     const value = desc[key][name];
                     terms[key][name] = this.parse(value);
                 }
@@ -13505,7 +13508,7 @@ internals.Builder = class {
         }
 
         const normalized = {};
-        for (const key in desc) {
+        for (const key of Object.keys(desc)) {
             normalized[key] = this.build(desc[key], { assign: key });
         }
 
@@ -13568,7 +13571,7 @@ exports.compile = function (messages, target) {
 
     target = target ? clone(target) : {};
 
-    for (let code in messages) {
+    for (const code of Object.keys(messages)) {
         const message = messages[code];
 
         if (code === 'root' ||
@@ -13588,20 +13591,24 @@ exports.compile = function (messages, target) {
         assert(typeof message === 'object' && !Array.isArray(message), 'Invalid message for', code);
 
         const language = code;
-        target[language] = target[language] || {};
 
-        for (code in message) {
-            const localized = message[code];
+        // Don't reuse an inherited object, otherwise a language named __proto__ or constructor writes on the prototype
 
-            if (code === 'root' ||
+        const localizedTarget = Object.hasOwn(target, language) ? target[language] : {};
+        target[language] = localizedTarget;
+
+        for (const key of Object.keys(message)) {
+            const localized = message[key];
+
+            if (key === 'root' ||
                 Template.isTemplate(localized)) {
 
-                target[language][code] = localized;
+                localizedTarget[key] = localized;
                 continue;
             }
 
-            assert(typeof localized === 'string', 'Invalid message for', code, 'in', language);
-            target[language][code] = new Template(localized);
+            assert(typeof localized === 'string', 'Invalid message for', key, 'in', language);
+            localizedTarget[key] = new Template(localized);
         }
     }
 
@@ -13614,7 +13621,7 @@ exports.decompile = function (messages) {
     // By error code { 'number.min': <string | template> }
 
     const target = {};
-    for (let code in messages) {
+    for (const code of Object.keys(messages)) {
         const message = messages[code];
 
         if (code === 'root') {
@@ -13632,15 +13639,15 @@ exports.decompile = function (messages) {
         const language = code;
         target[language] = {};
 
-        for (code in message) {
-            const localized = message[code];
+        for (const key of Object.keys(message)) {
+            const localized = message[key];
 
-            if (code === 'root') {
+            if (key === 'root') {
                 target[language].root = localized;
                 continue;
             }
 
-            target[language][code] = localized.describe({ compact: true });
+            target[language][key] = localized.describe({ compact: true });
         }
     }
 
@@ -13674,7 +13681,7 @@ exports.merge = function (base, extended) {
 
     const target = clone(base);
 
-    for (let code in extended) {
+    for (const code of Object.keys(extended)) {
         const message = extended[code];
 
         if (code === 'root' ||
@@ -13694,20 +13701,24 @@ exports.merge = function (base, extended) {
         assert(typeof message === 'object' && !Array.isArray(message), 'Invalid message for', code);
 
         const language = code;
-        target[language] = target[language] || {};
 
-        for (code in message) {
-            const localized = message[code];
+        // Same as in compile(), don't reuse an inherited object
 
-            if (code === 'root' ||
+        const localizedTarget = Object.hasOwn(target, language) ? target[language] : {};
+        target[language] = localizedTarget;
+
+        for (const key of Object.keys(message)) {
+            const localized = message[key];
+
+            if (key === 'root' ||
                 Template.isTemplate(localized)) {
 
-                target[language][code] = localized;
+                localizedTarget[key] = localized;
                 continue;
             }
 
-            assert(typeof localized === 'string', 'Invalid message for', code, 'in', language);
-            target[language][code] = new Template(localized);
+            assert(typeof localized === 'string', 'Invalid message for', key, 'in', language);
+            localizedTarget[key] = new Template(localized);
         }
     }
 
@@ -13744,8 +13755,17 @@ exports.Ids = internals.Ids = class {
     clone() {
 
         const clone = new internals.Ids();
-        clone._byId = new Map(this._byId);
-        clone._byKey = new Map(this._byKey);
+
+        // Most schemas have no ids nor keys, so we keep the empty maps the constructor already made
+
+        if (this._byId.size) {
+            clone._byId = new Map(this._byId);
+        }
+
+        if (this._byKey.size) {
+            clone._byKey = new Map(this._byKey);
+        }
+
         clone._schemaChain = this._schemaChain;
         return clone;
     }
@@ -13893,7 +13913,7 @@ exports.schema = function (schema, options) {
 
     let obj;
 
-    for (const name in schema._flags) {
+    for (const name of Object.keys(schema._flags)) {
         if (name[0] === '_') {
             continue;
         }
@@ -13921,7 +13941,7 @@ exports.schema = function (schema, options) {
         }
     }
 
-    for (const name in schema.$_terms) {
+    for (const name of Object.keys(schema.$_terms)) {
         if (name[0] === '_') {
             continue;
         }
@@ -13973,7 +13993,7 @@ internals.scan = function (item, source, options, _path, _key) {
         return result;
     }
 
-    for (const key in item) {
+    for (const key of Object.keys(item)) {
         if (key[0] === '_') {
             continue;
         }
@@ -13996,7 +14016,7 @@ internals.scan = function (item, source, options, _path, _key) {
 
 
 
-const { assert, clone, reach } = __nccwpck_require__(1884);
+const { assert, reach } = __nccwpck_require__(1884);
 
 const Common = __nccwpck_require__(4205);
 
@@ -14392,7 +14412,7 @@ exports.Manager = class {
     clone() {
 
         const copy = new exports.Manager();
-        copy.refs = clone(this.refs);
+        copy.refs = this.refs.slice();          // Entries are never mutated once registered, so a shallow copy is enough
         return copy;
     }
 
@@ -15900,6 +15920,9 @@ module.exports = Any.extend({
             if (matchMode === 'one') {
                 res.oneOf = matches;
             }
+            else if (matchMode === 'all') {
+                res.allOf = matches;
+            }
             else {
                 res.anyOf = matches;
             }
@@ -16268,7 +16291,7 @@ module.exports = Base.extend({
 
         build(obj, desc) {
 
-            for (const key in desc) {
+            for (const key of Object.keys(desc)) {
                 const values = desc[key];
 
                 if (['examples', 'externals', 'metas', 'notes', 'tags'].includes(key)) {
@@ -16430,7 +16453,7 @@ module.exports = Any.extend({
 
             if (ordered.length) {
                 res.unevaluatedItems = items;
-                res.minItems = ordered.length;
+                internals.setOrderedMinItems(res, ordered);
             }
             else {
                 res.items = items;
@@ -16440,7 +16463,7 @@ module.exports = Any.extend({
             // No additional items allowed beyond the ordered ones
 
             res.unevaluatedItems = false;
-            res.minItems = ordered.length;
+            internals.setOrderedMinItems(res, ordered);
             res.maxItems = ordered.length;
         }
 
@@ -16448,7 +16471,9 @@ module.exports = Any.extend({
 
         const contains = [];
         for (const rule of schema._rules) {
-            if (rule.name === 'has') {
+            if (rule.name === 'has' &&
+                !rule.args.schema._refs.refs.length) {
+
                 contains.push(rule.args.schema.$_jsonSchema(mode, options));
             }
         }
@@ -16997,7 +17022,9 @@ module.exports = Any.extend({
             },
             jsonSchema(rule, res) {
 
-                res.uniqueItems = true;
+                if (!rule.args.comparator) {
+                    res.uniqueItems = true;
+                }
 
                 return res;
             },
@@ -17104,6 +17131,29 @@ module.exports = Any.extend({
 
 
 // Helpers
+
+internals.setOrderedMinItems = function (res, ordered) {
+
+    // Ordered items are optional by default; the array only needs to reach the
+    // last explicitly required position.
+    const minItems = internals.orderedMinItems(ordered);
+    if (minItems) {
+        res.minItems = minItems;
+    }
+};
+
+
+internals.orderedMinItems = function (ordered) {
+
+    for (let i = ordered.length - 1; i >= 0; --i) {
+        if (ordered[i]._flags.presence === 'required') {
+            return i + 1;
+        }
+    }
+
+    return 0;
+};
+
 
 internals.fillMissedErrors = function (schema, errors, requireds, value, state, prefs) {
 
@@ -18017,6 +18067,11 @@ module.exports = Any.extend({
             for (const child of schema.$_terms.keys) {
                 const jsonSchema = child.schema.$_jsonSchema(mode, options);
                 res.properties[child.key] = jsonSchema;
+
+                if (child.schema._flags.id) {
+                    options.$defs[child.schema._flags.id] = jsonSchema;
+                }
+
                 if (child.schema._flags.presence === 'required' ||
                     (mode === 'output' && child.schema._flags.default !== undefined)) {
 
@@ -18276,7 +18331,7 @@ module.exports = Any.extend({
                 }
                 else {
                     obj.$_terms.keys = obj.$_terms.keys ? obj.$_terms.keys.filter((child) => !schema.hasOwnProperty(child.key)) : new internals.Keys();
-                    for (const key in schema) {
+                    for (const key of Object.keys(schema)) {
                         Common.tryWithPath(() => obj.$_terms.keys.push({ key, schema: this.$_compile(schema[key]) }), key);
                     }
                 }
@@ -18551,12 +18606,7 @@ module.exports = Any.extend({
     rebuild(schema) {
 
         if (schema.$_terms.keys) {
-            const topo = new Topo.Sorter();
-            for (const child of schema.$_terms.keys) {
-                Common.tryWithPath(() => topo.add(child, { after: child.schema.$_rootReferences(), group: child.key }), child.key);
-            }
-
-            schema.$_terms.keys = new internals.Keys(...topo.nodes);
+            schema.$_terms.keys = new internals.Keys(...internals.sortKeys(schema.$_terms.keys));
         }
     },
 
@@ -18606,6 +18656,7 @@ module.exports = Any.extend({
         'object.regex': '{{#label}} must be a RegExp object',
         'object.rename.multiple': '{{#label}} cannot rename {{:#from}} because multiple renames are disabled and another key was already renamed to {{:#to}}',
         'object.rename.override': '{{#label}} cannot rename {{:#from}} because override is disabled and target {{:#to}} exists',
+        'object.rename.proto': '{{#label}} cannot rename {{:#from}} because target {{:#to}} is a reserved key',
         'object.schema': '{{#label}} must be a Joi schema of {{#type}} type',
         'object.unknown': '{{#label}} is not allowed',
         'object.with': '{{:#mainWithLabel}} missing required peer {{:#peerWithLabel}}',
@@ -18626,8 +18677,15 @@ internals.clone = function (value, prefs) {
             return Clone(value, { shallow: true });
         }
 
-        const clone = Object.create(Object.getPrototypeOf(value));
+        const proto = Object.getPrototypeOf(value);
+        const clone = Object.create(proto);
         Object.assign(clone, value);
+
+        // Restore the prototype in case of pre-existing prototype pollution
+        if (Object.getPrototypeOf(clone) !== proto) {
+            Object.setPrototypeOf(clone, proto);
+        }
+
         return clone;
     }
 
@@ -18845,6 +18903,25 @@ internals.dependencies = {
 };
 
 
+internals.sortKeys = function (keys, manual = true) {
+
+    const topo = new Topo.Sorter();
+    for (const child of keys) {
+        Common.tryWithPath(() => topo.add(child, { after: child.schema.$_rootReferences(), group: child.key, manual }), child.key);
+    }
+
+    try {
+        return topo.sort();
+    }
+    catch {
+
+        // Sorting once at the end doesn't tell which key created the cycle, so replay the adds sorting each time to get the detailed error
+
+        return internals.sortKeys(keys, false);
+    }
+};
+
+
 internals.keysToLabels = function (schema, keys) {
 
     if (Array.isArray(keys)) {
@@ -18876,7 +18953,7 @@ internals.rename = function (schema, value, state, prefs, errors) {
             }
         }
         else {
-            for (const from in value) {
+            for (const from of Object.keys(value)) {
                 if (value[from] === undefined &&
                     rename.options.ignoreUndefined) {
 
@@ -18924,6 +19001,15 @@ internals.rename = function (schema, value, state, prefs, errors) {
                 if (prefs.abortEarly) {
                     return false;
                 }
+            }
+
+            if (to === '__proto__') {
+                errors.push(schema.$_createError('object.rename.proto', value, { from, to, pattern }, state, prefs));
+                if (prefs.abortEarly) {
+                    return false;
+                }
+
+                continue;
             }
 
             if (value[from] === undefined) {
@@ -20125,7 +20211,7 @@ module.exports = Any.extend({
         email: {
             method(options = {}) {
 
-                Common.assertOptions(options, ['allowFullyQualified', 'allowUnicode', 'ignoreLength', 'maxDomainSegments', 'minDomainSegments', 'multiple', 'separator', 'tlds']);
+                Common.assertOptions(options, ['allowFullyQualified', 'allowUnicode', 'allowUnderscore', 'ignoreLength', 'maxDomainSegments', 'minDomainSegments', 'multiple', 'separator', 'tlds']);
                 assert(options.multiple === undefined || typeof options.multiple === 'boolean', 'multiple option must be an boolean');
 
                 const address = internals.addressOptions(options);
@@ -20505,7 +20591,19 @@ module.exports = Any.extend({
             },
             jsonSchema(rule, res) {
 
-                res.pattern = rule.args.regex.source;
+                const pattern = rule.args.regex.source;
+
+                if (res.allOf) {
+                    res.allOf.push({ pattern });
+                }
+                else if (res.pattern !== undefined) {
+                    res.allOf = [{ pattern: res.pattern }, { pattern }];
+                    delete res.pattern;
+                }
+                else {
+                    res.pattern = pattern;
+                }
+
                 return res;
             },
             args: ['regex', 'options'],
@@ -20777,8 +20875,8 @@ internals.isoDate = function (value) {
         return null;
     }
 
-    if (/.*T.*[+-]\d\d$/.test(value)) {             // Add missing trailing zeros to timeshift
-        value += '00';
+    if (/T.*[+-]\d\d$/.test(value)) {                // Add missing separator and trailing zeros to timeshift
+        value += ':00';
     }
 
     const date = new Date(value);
@@ -21141,17 +21239,19 @@ internals.Mainstay = class {
 
     snapshot() {
 
+        // Both lists are append-only during the walk, so we only need to remember where to truncate
+
         this._snapshots.push({
-            externals: this.externals.slice(),
-            warnings: this.warnings.slice()
+            externals: this.externals.length,
+            warnings: this.warnings.length
         });
     }
 
     restore() {
 
         const snapshot = this._snapshots.pop();
-        this.externals = snapshot.externals;
-        this.warnings = snapshot.warnings;
+        this.externals.length = snapshot.externals;
+        this.warnings.length = snapshot.warnings;
     }
 
     commit() {
@@ -21224,6 +21324,12 @@ exports.validate = function (value, schema, state, prefs, overrides = {}) {
         if (result) {
             return result;
         }
+    }
+
+    // Failover scope
+
+    if (schema._flags.failover !== undefined) {
+        state.snapshot();                       // A failover discards the value, so it must discard whatever validating it registered
     }
 
     // Helpers
@@ -21489,12 +21595,27 @@ internals.finalize = function (value, errors, helpers) {
 
     // Failover value
 
-    if (errors.length) {
-        const failover = internals.default('failover', undefined, errors, helpers);
-        if (failover !== undefined) {
-            state.mainstay.tracer.value(state, 'failover', value, failover);
-            value = failover;
-            errors = [];
+    if (schema._flags.failover !== undefined) {
+        let applied = false;
+
+        if (errors.length) {
+            const failover = internals.default('failover', undefined, errors, helpers);
+            if (failover !== undefined) {
+                state.mainstay.tracer.value(state, 'failover', value, failover);
+                value = failover;
+                errors = [];
+                applied = true;
+            }
+        }
+
+        // The externals and warnings collected below this point were registered against the value we
+        // just threw away, and the failover value isn't validated, so roll them back
+
+        if (applied) {
+            state.restore();
+        }
+        else {
+            state.commit();
         }
     }
 
@@ -52323,7 +52444,7 @@ __webpack_unused_export__ = defaultContentType
 /***/ 570:
 /***/ ((module) => {
 
-module.exports = /*#__PURE__*/JSON.parse('{"name":"joi","description":"Object schema validation","version":"18.2.1","repository":{"url":"git://github.com/hapijs/joi.git","type":"git"},"engines":{"node":">= 20"},"main":"lib/index.js","types":"lib/index.d.ts","browser":"dist/joi-browser.min.js","files":["lib/**/*","dist/*"],"keywords":["schema","validation"],"dependencies":{"@hapi/address":"^5.1.1","@hapi/formula":"^3.0.2","@hapi/hoek":"^11.0.7","@hapi/pinpoint":"^2.0.1","@hapi/tlds":"^1.1.1","@hapi/topo":"^6.0.2","@standard-schema/spec":"^1.1.0"},"devDependencies":{"@hapi/bourne":"^3.0.0","@hapi/code":"^9.0.3","@hapi/eslint-plugin":"^7.0.0","@hapi/joi-legacy-test":"npm:@hapi/joi@15.x.x","@hapi/lab":"^26.0.0","@types/node":"^20.17.47","ajv":"^8.18.0","typescript":"^5.8.3"},"scripts":{"prepublishOnly":"cd browser && npm install && npm run build","test":"lab -t 100 -a @hapi/code -L -Y","test-cov-html":"lab -r html -o coverage.html -a @hapi/code"},"license":"BSD-3-Clause"}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"joi","description":"Object schema validation","version":"18.2.8","repository":{"url":"git://github.com/hapijs/joi.git","type":"git"},"engines":{"node":">= 20"},"main":"lib/index.js","types":"lib/index.d.ts","browser":"dist/joi-browser.min.js","files":["lib/**/*","dist/*"],"keywords":["schema","validation"],"dependencies":{"@hapi/address":"^5.1.1","@hapi/formula":"^3.0.2","@hapi/hoek":"^11.0.7","@hapi/pinpoint":"^2.0.1","@hapi/tlds":"^1.1.1","@hapi/topo":"^6.0.2","@standard-schema/spec":"^1.1.0"},"devDependencies":{"@hapi/bourne":"^3.0.0","@hapi/code":"^9.0.3","@hapi/eslint-plugin":"^7.0.0","@hapi/joi-legacy-test":"npm:@hapi/joi@15.x.x","@hapi/lab":"^26.0.0","@types/node":"^20.17.47","ajv":"^8.18.0","ajv-formats":"^3.0.1","typescript":"^5.8.3"},"scripts":{"prepublishOnly":"cd browser && npm install && npm run build","test":"lab -t 100 -a @hapi/code -L -Y","test-cov-html":"lab -r html -o coverage.html -a @hapi/code"},"license":"BSD-3-Clause"}');
 
 /***/ }),
 
