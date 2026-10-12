@@ -13577,11 +13577,21 @@ exports.compile = function (messages, target) {
         if (code === 'root' ||
             Template.isTemplate(message)) {
 
+            // A flat code named __proto__ triggers the legacy accessor on plain-object assignment, and
+            // what we assign is always a Template, i.e. an object the accessor accepts, so it replaces
+            // target's own prototype instead of creating an own property. That in turn makes
+            // Template.isTemplate(target) true, so every code renders that one message
+
+            assert(code !== '__proto__', 'Cannot use __proto__ as a message code');
+
             target[code] = message;
             continue;
         }
 
         if (typeof message === 'string') {
+
+            assert(code !== '__proto__', 'Cannot use __proto__ as a message code');
+
             target[code] = new Template(message);
             continue;
         }
@@ -13599,6 +13609,8 @@ exports.compile = function (messages, target) {
 
         for (const key of Object.keys(message)) {
             const localized = message[key];
+
+            assert(key !== '__proto__', 'Cannot use __proto__ as a message code');
 
             if (key === 'root' ||
                 Template.isTemplate(localized)) {
@@ -13687,11 +13699,18 @@ exports.merge = function (base, extended) {
         if (code === 'root' ||
             Template.isTemplate(message)) {
 
+            // Same as in compile(), a flat code named __proto__ replaces target's own prototype
+
+            assert(code !== '__proto__', 'Cannot use __proto__ as a message code');
+
             target[code] = message;
             continue;
         }
 
         if (typeof message === 'string') {
+
+            assert(code !== '__proto__', 'Cannot use __proto__ as a message code');
+
             target[code] = new Template(message);
             continue;
         }
@@ -13709,6 +13728,8 @@ exports.merge = function (base, extended) {
 
         for (const key of Object.keys(message)) {
             const localized = message[key];
+
+            assert(key !== '__proto__', 'Cannot use __proto__ as a message code');
 
             if (key === 'root' ||
                 Template.isTemplate(localized)) {
@@ -52710,7 +52731,7 @@ __webpack_unused_export__ = defaultContentType
 /***/ 570:
 /***/ ((module) => {
 
-module.exports = /*#__PURE__*/JSON.parse('{"name":"joi","description":"Object schema validation","version":"18.2.8","repository":{"url":"git://github.com/hapijs/joi.git","type":"git"},"engines":{"node":">= 20"},"main":"lib/index.js","types":"lib/index.d.ts","browser":"dist/joi-browser.min.js","files":["lib/**/*","dist/*"],"keywords":["schema","validation"],"dependencies":{"@hapi/address":"^5.1.1","@hapi/formula":"^3.0.2","@hapi/hoek":"^11.0.7","@hapi/pinpoint":"^2.0.1","@hapi/tlds":"^1.1.1","@hapi/topo":"^6.0.2","@standard-schema/spec":"^1.1.0"},"devDependencies":{"@hapi/bourne":"^3.0.0","@hapi/code":"^9.0.3","@hapi/eslint-plugin":"^7.0.0","@hapi/joi-legacy-test":"npm:@hapi/joi@15.x.x","@hapi/lab":"^26.0.0","@types/node":"^20.17.47","ajv":"^8.18.0","ajv-formats":"^3.0.1","typescript":"^5.8.3"},"scripts":{"prepublishOnly":"cd browser && npm install && npm run build","test":"lab -t 100 -a @hapi/code -L -Y","test-cov-html":"lab -r html -o coverage.html -a @hapi/code"},"license":"BSD-3-Clause"}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"joi","description":"Object schema validation","version":"18.2.9","repository":{"url":"git://github.com/hapijs/joi.git","type":"git"},"engines":{"node":">= 20"},"main":"lib/index.js","types":"lib/index.d.ts","browser":"dist/joi-browser.min.js","files":["lib/**/*","dist/*"],"keywords":["schema","validation"],"dependencies":{"@hapi/address":"^5.1.1","@hapi/formula":"^3.0.2","@hapi/hoek":"^11.0.7","@hapi/pinpoint":"^2.0.1","@hapi/tlds":"^1.1.1","@hapi/topo":"^6.0.2","@standard-schema/spec":"^1.1.0"},"devDependencies":{"@hapi/bourne":"^3.0.0","@hapi/code":"^9.0.3","@hapi/eslint-plugin":"^7.0.0","@hapi/joi-legacy-test":"npm:@hapi/joi@15.x.x","@hapi/lab":"^26.0.0","@types/node":"^20.17.47","ajv":"^8.18.0","ajv-formats":"^3.0.1","typescript":"^5.8.3"},"scripts":{"prepublishOnly":"cd browser && npm install && npm run build","test":"lab -t 100 -a @hapi/code -L -Y","test-cov-html":"lab -r html -o coverage.html -a @hapi/code"},"license":"BSD-3-Clause"}');
 
 /***/ }),
 
