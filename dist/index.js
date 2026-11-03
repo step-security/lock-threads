@@ -8087,7 +8087,7 @@ RedirectableRequest.prototype._sanitizeOptions = function (options) {
     }
   }
   // Ensure sensitive headers are always present
-  if (!isArray(options.sensitiveHeaders)) {
+  if (!Array.isArray(options.sensitiveHeaders)) {
     options.sensitiveHeaders = [];
   }
 
@@ -8463,10 +8463,6 @@ function isSubdomain(subdomain, domain) {
   assert(isString(subdomain) && isString(domain));
   var dot = subdomain.length - domain.length - 1;
   return dot > 0 && subdomain[dot] === "." && subdomain.endsWith(domain);
-}
-
-function isArray(value) {
-  return value instanceof Array;
 }
 
 function isString(value) {
@@ -12508,6 +12504,16 @@ exports.type = function (from, options) {
 
     // Prepare
 
+    if (def.prepare) {
+        const { method, undefined: acceptsUndefined } = typeof def.prepare === 'function' ? { method: def.prepare } : def.prepare;
+        def.prepare = acceptsUndefined ? method : (value, helpers) => {
+
+            if (value !== undefined) {
+                return method(value, helpers);
+            }
+        };
+    }
+
     def.prepare = internals.prepare(def.prepare, parent.prepare);
 
     // Coerce
@@ -13611,7 +13617,11 @@ exports.compile = function (messages, target) {
 
         const language = code;
 
-        // Don't reuse an inherited object, otherwise a language named __proto__ or constructor writes on the prototype
+        // A language named __proto__ would replace target's own prototype with the localized messages
+
+        assert(language !== '__proto__', 'Cannot use __proto__ as a language');
+
+        // Don't reuse an inherited object, otherwise a language named constructor writes on Object
 
         const localizedTarget = Object.hasOwn(target, language) ? target[language] : {};
         target[language] = localizedTarget;
@@ -13730,7 +13740,9 @@ exports.merge = function (base, extended) {
 
         const language = code;
 
-        // Same as in compile(), don't reuse an inherited object
+        // Same as in compile(), reject __proto__ and don't reuse an inherited object
+
+        assert(language !== '__proto__', 'Cannot use __proto__ as a language');
 
         const localizedTarget = Object.hasOwn(target, language) ? target[language] : {};
         target[language] = localizedTarget;
@@ -14525,6 +14537,9 @@ exports.preferences = Joi.object({
 internals.nameRx = /^[a-zA-Z0-9]\w*$/;
 
 
+internals.hook = Joi.function().maxArity(3);
+
+
 internals.rule = Joi.object({
     alias: Joi.array().items(Joi.string().pattern(internals.nameRx)).single(),
     args: Joi.array().items(
@@ -14564,8 +14579,8 @@ exports.extension = Joi.object({
     base: Joi.object().schema()
         .when('type', { is: Joi.object().regex(), then: Joi.forbidden() }),
     coerce: [
-        Joi.function().maxArity(3),
-        Joi.object({ method: Joi.function().maxArity(3).required(), from: Joi.array().items(Joi.string()).single() })
+        internals.hook,
+        Joi.object({ method: internals.hook.required(), from: Joi.array().items(Joi.string()).single() })
     ],
     flags: Joi.object().pattern(internals.nameRx, Joi.object({
         setter: Joi.string(),
@@ -14577,7 +14592,10 @@ exports.extension = Joi.object({
     messages: [Joi.object(), Joi.string()],
     modifiers: Joi.object().pattern(internals.nameRx, Joi.function().minArity(1).maxArity(2)),
     overrides: Joi.object().pattern(internals.nameRx, Joi.function()),
-    prepare: Joi.function().maxArity(3),
+    prepare: [
+        internals.hook,
+        Joi.object({ method: internals.hook.required(), undefined: Joi.boolean() })
+    ],
     rebuild: Joi.function().arity(1),
     rules: Joi.object().pattern(internals.nameRx, internals.rule),
     jsonSchema: Joi.function(),
@@ -14594,7 +14612,7 @@ exports.extension = Joi.object({
             })
         ])
     })),
-    validate: Joi.function().maxArity(3)
+    validate: internals.hook
 })
     .strict();
 
@@ -18970,7 +18988,7 @@ internals.isPresent = function (options) {
 
 internals.rename = function (schema, value, state, prefs, errors) {
 
-    const renamed = {};
+    const renamed = Object.create(null);
     for (const rename of schema.$_terms.renames) {
         const matches = [];
         const pattern = typeof rename.from !== 'string';
@@ -20245,7 +20263,9 @@ module.exports = Any.extend({
                 assert(options.multiple === undefined || typeof options.multiple === 'boolean', 'multiple option must be an boolean');
 
                 const address = internals.addressOptions(options);
-                const regex = new RegExp(`\\s*[${options.separator ? escapeRegex(options.separator) : ','}]\\s*`);
+                // Only start the leading whitespace at the beginning of a run, otherwise the split is quadratic on long whitespace runs,
+                // and only build it when needed since lookbehind requires Safari 16.4+
+                const regex = options.multiple ? new RegExp(`(?:(?<!\\s)\\s+)?[${options.separator ? escapeRegex(options.separator) : ','}]\\s*`) : undefined;
 
                 return this.$_addRule({ name: 'email', args: { options }, regex, address });
             },
@@ -21382,7 +21402,6 @@ exports.validate = function (value, schema, state, prefs, overrides = {}) {
 
     const def = schema._definition;
     if (def.prepare &&
-        value !== undefined &&
         prefs.convert) {
 
         const prepared = def.prepare(value, helpers);
@@ -52844,7 +52863,7 @@ __webpack_unused_export__ = defaultContentType
 /***/ 570:
 /***/ ((module) => {
 
-module.exports = /*#__PURE__*/JSON.parse('{"name":"joi","description":"Object schema validation","version":"18.2.9","repository":{"url":"git://github.com/hapijs/joi.git","type":"git"},"engines":{"node":">= 20"},"main":"lib/index.js","types":"lib/index.d.ts","browser":"dist/joi-browser.min.js","files":["lib/**/*","dist/*"],"keywords":["schema","validation"],"dependencies":{"@hapi/address":"^5.1.1","@hapi/formula":"^3.0.2","@hapi/hoek":"^11.0.7","@hapi/pinpoint":"^2.0.1","@hapi/tlds":"^1.1.1","@hapi/topo":"^6.0.2","@standard-schema/spec":"^1.1.0"},"devDependencies":{"@hapi/bourne":"^3.0.0","@hapi/code":"^9.0.3","@hapi/eslint-plugin":"^7.0.0","@hapi/joi-legacy-test":"npm:@hapi/joi@15.x.x","@hapi/lab":"^26.0.0","@types/node":"^20.17.47","ajv":"^8.18.0","ajv-formats":"^3.0.1","typescript":"^5.8.3"},"scripts":{"prepublishOnly":"cd browser && npm install && npm run build","test":"lab -t 100 -a @hapi/code -L -Y","test-cov-html":"lab -r html -o coverage.html -a @hapi/code"},"license":"BSD-3-Clause"}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"joi","description":"Object schema validation","version":"18.3.1","repository":{"url":"git://github.com/hapijs/joi.git","type":"git"},"engines":{"node":">= 20"},"main":"lib/index.js","types":"lib/index.d.ts","browser":"dist/joi-browser.min.js","files":["lib/**/*","dist/*"],"keywords":["schema","validation"],"dependencies":{"@hapi/address":"^5.1.1","@hapi/formula":"^3.0.2","@hapi/hoek":"^11.0.7","@hapi/pinpoint":"^2.0.1","@hapi/tlds":"^1.1.1","@hapi/topo":"^6.0.2","@standard-schema/spec":"^1.1.0"},"devDependencies":{"@hapi/bourne":"^3.0.0","@hapi/code":"^9.0.3","@hapi/eslint-plugin":"^7.0.0","@hapi/joi-legacy-test":"npm:@hapi/joi@15.x.x","@hapi/lab":"^26.0.0","@types/node":"^20.17.47","ajv":"^8.18.0","ajv-formats":"^3.0.1","typescript":"^5.8.3"},"scripts":{"prepublishOnly":"cd browser && npm install && npm run build","test":"lab -t 100 -a @hapi/code -L -Y","test-cov-html":"lab -r html -o coverage.html -a @hapi/code"},"license":"BSD-3-Clause"}');
 
 /***/ }),
 
